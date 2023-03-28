@@ -32,7 +32,11 @@
 
 #if defined( _WIN32 )
 #if defined( _MSC_VER )
+#define WIN32_LEAN_AND_MEAN
+#define VC_EXTRALEAN
+#define NOMINMAX
 #include <codecvt>
+//#include <Windows.h>
 #include <io.h>
 #elif defined( __GNUC__ )
 #define _LARGEFILE64_SOURCE
@@ -60,6 +64,7 @@
 #error "no supported OS platform defined"
 #endif
 
+#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -233,14 +238,58 @@ CheckedFile::CheckedFile( const char *input, uint64_t size, ReadChecksumPolicy p
    logicalLength_ = physicalToLogical( physicalLength_ );
 }
 
+#if defined( WIN32 ) && 0
+const char *strerrorMBTWC( DWORD errCode )
+{
+   switch ( errCode )
+   {
+      case ERROR_INSUFFICIENT_BUFFER:
+         return "ERROR_INSUFFICIENT_BUFFER";
+      case ERROR_INVALID_FLAGS:
+         return "ERROR_INVALID_FLAGS";
+      case ERROR_INVALID_PARAMETER:
+         return "ERROR_INVALID_PARAMETER";
+      case ERROR_NO_UNICODE_TRANSLATION:
+         return "ERROR_NO_UNICODE_TRANSLATION";
+      default:
+         assert( false );
+         return "Unknown error code";
+   }
+}
+#endif
+
 int CheckedFile::open64( const ustring &fileName, int flags, int mode )
 {
 #if defined( _MSC_VER )
    // Ref: https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/sopen-s-wsopen-s
 
    // Handle UTF-8 file names - Windows requires conversion to UTF-16
+    #if 1
    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
    std::wstring widePath = converter.from_bytes( fileName );
+    #else
+   int widePathSize = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, fileName.c_str(),
+                                           static_cast<int>(fileName.size()), NULL, 0 );
+   if ( widePathSize == 0 )
+   {
+      DWORD errCode = GetLastError();
+      const char *errMsg = strerrorMBTWC( errCode );
+      throw E57_EXCEPTION2( ErrorBadPathName, "errCode=" + toString( errCode ) +
+                                                 " error='" + errMsg + "'" +
+                                                 " fileName=" + fileName );
+   }
+
+   std::wstring widePath( widePathSize, '\0');
+   int retval = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, fileName.c_str(),
+                                     static_cast<int>(fileName.size()), &widePath[0], widePathSize );
+   if ( retval == 0 )
+   {
+      DWORD errCode = GetLastError();
+      const char *errMsg = strerrorMBTWC( errCode );
+      throw E57_EXCEPTION2( ErrorBadPathName, "errCode=" + toString( errCode ) + " error='" +
+                                                 errMsg + "'" + " fileName=" + fileName );
+   }
+   #endif
 
    int handle;
    errno_t err = _wsopen_s( &handle, widePath.c_str(), flags, _SH_DENYNO, mode );
